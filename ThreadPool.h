@@ -55,6 +55,45 @@ inline ThreadPool::ThreadPool(size_t threads):stop(false){
     }
 }
 
+template<class F, class... Args>
+auto ThreadPool::enqueue(F&& f, Args&&... args)->std::future<typename std::result_of<F(Args...)>::type>{
+    // 指定 "返回值类型" 别名
+    using return_type = typename astd::result_of<F(Args...)>::type;
+    // 将bind()函数包装起来并分配其智能指针给task变量
+    auto task = std::make_shared<std::packaged_task<return_type()> >(std::bind(std::forward<F>(f), std::forward<Args>(args)...));
+    
+
+    // 获取task的future对象
+    std::future<return_type> res = task->get_future();
+    {
+        // 加锁
+        std::unique_lock<std::mutex> lock(queue_mutex);
+
+        // 如果停止使用线程池，则不可以添加任务
+        if(stop)
+            throw std::runtime_error("enqueue on stopped ThreadPool");
+        // 添加任务
+        tasks.emplace([task]{(*task)();});
+
+        // 互斥向量锁
+    }
+    // 把wait()线程唤醒=》解除阻塞到condition条件变量的线程
+    condition.notify_one();
+    return res;
+}
+
+inline ThreadPool::~ThreadPool(){
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        // 停止使用线程池
+        stop = true;
+    }
+    // 唤醒所有wait()
+    condition.notify_all();
+    // 所有线程汇合
+    for(std::thread& worker: workers)
+        worker.join();
+}
 
 
 #endif
