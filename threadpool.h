@@ -9,6 +9,7 @@
 #include<mutex>
 #include<condition_variable>
 #include<atomic>
+#include<future>
 
 namespace std{
     // 线程池最大容量，应该尽量设小一点
@@ -44,13 +45,100 @@ namespace std{
         }
 
         inline ~threadpool(){
+            _run = false;
+            // 线程唤醒
+            _task_cv.notify_all();
 
+            for(thread& thread :_pool){
+                // 等待任务结束之后退出
+                if(thread.joinable())
+                    thread.join();
+            }
+        }
+    public:
+        // 提交一个任务
+        // 调用.get()获取返回值，会等待任务执行完，获取返回值
+        /*
+            两种方法调用类成员
+            1. bind: .commit(std::bind(&Dog::sayHello, &dog));
+            2. 使用mem_fn ： .commit(std::mem_fn(&Dog::sayHello), this);
+        */
+        template<class F, class...Args>
+        auto commit(F&& f, Args&&... args) -> future<decltype(f(args...))>
+        {
+            if(!_run)
+                throw runtime_error("commit on ThreadPool is stopped.");
+            
+            using RetType = decltype(f(args...)); // typename std::result_of<F(Args...)>::type, 函数 f 的返回值类型
+            auto task = make_shared<packaged_task<RetType()>>(
+                bind(forward<F>(f), forward<Args>(args)...)
+            ); // 把函数入口及参数，打包(绑定)
+
+            future<RetType> future = task->get_future();
+            {
+                // 添加任务到队列
+                lock_guard<mutex> lock{_lock};
+                _tasks.emplace([task](){(*task)();
+                });
+            }
+
+            _tasks_cv.notify_one(); // 唤醒一个线程执行
+            return future;
         }
 
+
+
+        // 提交一个无参任务，且无返回值
+        template<class F>
+        void commit2(F&& task){
+            if(!_run) return;
+            {
+                lock_guard<mutex> lock{_lock};
+                _tasks.emplace(forward<F>(task));
+            }
+
+
+            _tasks_cv.notify_one(); // 唤醒一个线程执行
+        }
+        // 空闲线程数量
+        int idlCount(){return _idlThrNum;}
+        // 线程数量
+        int thrCount(){return _pool.size();}
+
+        void addThread(unsigned short size){
+            for(;_pool.size() < THREADPOOL_MAX_NUM && size > 0; --size){
+                // 增加线程数量，但是不超过预定义的数量 THREADPOOL_MAX_NUM
+                _pool.emplace_back([this]{
+                    while(true){
+                        Task task;
+                        {
+                            unique_lock<mutex> lock{_lock};
+                            _task_cv.wait(lock, [this]{
+                                return !_run || !_tasks.empty();
+                            });
+                            if(!_run && _tasks.empty())
+                                return;
+                            _idlThrNum--;
+                            task = move(_tasks.front());
+                            _tasks.pop();
+                        }
+                        task(); // 执行任务
+
+                        {
+                            unique_lock<mutex> lock{_lock};
+                            _idlThrNum++;
+                
+                        }
+                            
+                    }
+                });
+                {
+                    unique_lock<mutex> lock{_lock};;
+                    _idlThrNum++;
+                }
+            }
+        }
     };
-};
-
-
-
+}
 
 #endif
