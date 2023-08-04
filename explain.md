@@ -46,10 +46,18 @@ atomic<bool> 表示一个原子布尔类型的变量，可以通过原子操作�
 
 
 ### 函数模板
+`template<class F, class...Args>`
 
+template 关键字表示接下来是一个模板定义。
+<class F, class... Args> 是模板参数列表，用于声明模板参数。在这个例子中，有两个模板参数：F 和 Args。F 表示函数类型，Args 表示一系列的参数类型。class... 是 C++11 中的语法，表示模板参数包，允许接受任意数量的模板参数。
+在函数模板定义中，可以使用这些模板参数来定义函数的参数、返回类型和函数体
 
+`auto commit(F&& f, Args&&... args) -> future<decltype(f(args...))>`
 
-
+auto 关键字表示函数的返回类型将根据表达式 f(args...) 的类型自动推导得出。这样可以确保返回类型与调用表达式的结果类型一致。
+commit 是函数的名称。
+(F&& f, Args&&... args) 是函数的参数列表。其中，F&& f 表示一个右值引用类型的参数 f，Args&&... args 表示一系列右值引用类型的参数 args，使用模板参数包的形式允许接受任意数量的参数。
+-> future<decltype(f(args...))> 是函数的返回类型。future 表示一个异步任务的结果，decltype(f(args...)) 用于推导 f(args...) 表达式的类型，并将其作为 future 的模板参数。
 
 ### lamda函数
 lambda函数的语法是[] () { ... }
