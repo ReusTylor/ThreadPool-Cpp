@@ -53,6 +53,7 @@ inline ThreadPool::ThreadPool(size_t threads)
                 {
                     // 声明一个可调用对象的变量，用于存储从任务队列中获取的任务
                     // task没有返回值，不带任何参数
+                    // task这个变量可以用来存储一个函数或可调用对象，调用方式是无参数，且不需要返回值
                     std::function<void()> task;
 
                     {
@@ -104,16 +105,22 @@ auto ThreadPool::enqueue(F&& f, Args&&... args)
     // 创建了一个 std::packaged_task 对象，封装了需要执行的任务
     /*
      * std::forward<F>(f), std::forward<Args>(args)...完美转发，保持传入的参数类型不变
-     * std::bind： 将函数类型和参数绑定，生成一个函数对象
-     * std::packaged_task<return_type() ： 封装的函数没有参数，返回值类型为return_type。
+     * std::bind： 将f（一个可调用对象，如函数 函数指针 成员函数指针等）以及其参数args进行绑定，返回一个新的可调用对象。
+     * std::packaged_task<return_type() ： 封装一个std::future对象中，以便于在异步操作中获取结果。
+     * std::make_shared 创建一个指向std::packaged_task对象的智能指针。
+     * 传递给std::make_shared的参数将作为std::packaged_task构造函数的参数
      */
+
     // 这样task变成了可以在异步线程中执行的任务
     auto task = std::make_shared< std::packaged_task<return_type()> >(
             std::bind(std::forward<F>(f), std::forward<Args>(args)...)
         );
     
-    // 获取与packaged_task关联的std::future对象，用于获取任务执行的结果
+
     // 将任务添加到线程池中的任务队列中
+    // res 模板类，用于表示一个未来值或者异步操作的结果。return_type占位符，表示未来值的类型。
+    // task->get_future()： 这是std::packaged_task对象的成员函数，用于获取一个std::future对象，该对象将与封装的任务关联，
+    // 以便在异步操作中获取任务的结果
     std::future<return_type> res = task->get_future();
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
@@ -123,9 +130,10 @@ auto ThreadPool::enqueue(F&& f, Args&&... args)
             throw std::runtime_error("enqueue on stopped ThreadPool");
         // 将任务封装成lamda函数，并存储在任务队列tasks中
         // 这里的task是一个智能指针，
+        //
         tasks.emplace([task](){ (*task)(); });
     }
-    // 有新任务可用，唤醒
+    // 有新任务可用，随即唤醒一个线程来执行
     condition.notify_one();
     // 返回之前获取的future对象，以便用户可以在需要时获取任务的执行结果
     return res;
